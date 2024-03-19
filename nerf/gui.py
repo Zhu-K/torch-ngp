@@ -63,6 +63,9 @@ class NeRFGUI:
         self.training = False
         self.step = 0 # training step 
 
+        self.pcloud_resolution = 1024
+        self.pcloud_threshold = 50
+
         self.trainer = trainer
         self.train_loader = train_loader
         if train_loader is not None:
@@ -258,6 +261,38 @@ class NeRFGUI:
 
                     with dpg.group(horizontal=True):
                         dpg.add_text("", tag="_log_train_log")
+
+                # save cloud
+                with dpg.collapsing_header(label="Point Cloud", default_open=True):
+
+                    def callback_set_pcloud_resolution(sender, app_data):
+                        self.pcloud_resolution = app_data
+
+                    def callback_set_pcloud_threshold(sender, app_data):
+                        self.pcloud_threshold = app_data
+
+                    dpg.add_slider_int(label="cloud resolution", min_value=128, max_value=1024,
+                                       format="%d", default_value=self.pcloud_resolution, callback=callback_set_pcloud_resolution)
+
+                    dpg.add_slider_int(label="cloud threshold", min_value=1, max_value=1000,
+                                       format="%d", default_value=self.pcloud_threshold, callback=callback_set_pcloud_threshold)
+
+                    with dpg.group(horizontal=True):
+                        dpg.add_text("Point cloud: ")
+
+                        def callback_pcloud(sender, app_data):
+                            self.trainer.save_pcloud(
+                                resolution=self.pcloud_resolution, threshold=self.pcloud_threshold)
+                            dpg.set_value(
+                                "_log_pcloud", "saved " + f'{self.trainer.name}_{self.trainer.epoch}.csv')
+                            # use epoch to indicate different calls.
+                            self.trainer.epoch += 1
+
+                        dpg.add_button(
+                            label="save", tag="_button_pcloud", callback=callback_pcloud)
+                        dpg.bind_item_theme("_button_pcloud", theme_button)
+
+                        dpg.add_text("", tag="_log_pcloud")
 
             
             # rendering options

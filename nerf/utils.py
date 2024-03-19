@@ -170,6 +170,33 @@ def torch_vis_2d(x, renormalize=False):
     plt.show()
 
 
+def extract_pcloud(bound_min, bound_max, resolution, query_func, threshold=10, S=128):
+
+    X = torch.linspace(bound_min[0], bound_max[0], resolution).split(S)
+    Y = torch.linspace(bound_min[1], bound_max[1], resolution).split(S)
+    Z = torch.linspace(bound_min[2], bound_max[2], resolution).split(S)
+
+    df_points_with_density = pd.DataFrame(columns=['x', 'y', 'z', 'density'])
+
+    with torch.no_grad():
+        for xi, xs in enumerate(X):
+            for yi, ys in enumerate(Y):
+                for zi, zs in enumerate(Z):
+                    xx, yy, zz = custom_meshgrid(xs, ys, zs)
+                    pts = torch.cat(
+                        [xx.reshape(-1, 1), yy.reshape(-1, 1), zz.reshape(-1, 1)], dim=-1)  # [S, 3]
+                    # [S, 1] --> [x, y, z]
+                    val = query_func(pts).detach().cpu()
+                    temp_df = pd.DataFrame(torch.cat([pts, val[:, None]], dim=1).cpu(
+                    ).numpy(), columns=['x', 'y', 'z', 'density'])
+                    temp_df = temp_df[temp_df['density'] > threshold]
+
+                    df_points_with_density = pd.concat(
+                        [df_points_with_density, temp_df], ignore_index=True)
+
+    return df_points_with_density
+
+
 def extract_fields(bound_min, bound_max, resolution, query_func, S=128):
 
     X = torch.linspace(bound_min[0], bound_max[0], resolution).split(S)
@@ -628,6 +655,28 @@ class Trainer(object):
         mesh.export(save_path)
 
         self.log(f"==> Finished saving mesh.")
+
+    def save_pcloud(self, save_path=None, resolution=256, threshold=10):
+
+        if save_path is None:
+            save_path = os.path.join(
+                self.workspace, 'pcloud', f'{self.name}_{self.epoch}.csv')
+
+        self.log(f"==> Saving point cloud to {save_path}")
+
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+
+        def query_func(pts):
+            with torch.no_grad():
+                with torch.cuda.amp.autocast(enabled=self.fp16):
+                    sigma = self.model.density(pts.to(self.device))['sigma']
+            return sigma
+
+        df = extract_pcloud(
+            self.model.aabb_infer[:3], self.model.aabb_infer[3:], resolution, query_func, threshold)
+        df.to_csv(save_path, index=False)
+
+        self.log(f"==> Finished saving point cloud.")
 
     ### ------------------------------
 
