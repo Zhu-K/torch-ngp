@@ -22,7 +22,7 @@ sampled_df = df.sample(n=min(MAX_POINTS, df.shape[0]))
 print("Displayed points:", sampled_df.shape[0])
 
 
-# take log of density to squish magnitudes
+# take log of density to squish magnitudes. Realistically opacity is 1-exp(-density)
 sampled_df['density'] = np.log(sampled_df['density'])
 
 

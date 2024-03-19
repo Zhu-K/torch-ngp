@@ -65,6 +65,7 @@ class NeRFGUI:
 
         self.pcloud_resolution = 1024
         self.pcloud_threshold = 50
+        self.pcloud_prune = True
 
         self.trainer = trainer
         self.train_loader = train_loader
@@ -271,18 +272,22 @@ class NeRFGUI:
                     def callback_set_pcloud_threshold(sender, app_data):
                         self.pcloud_threshold = app_data
 
-                    dpg.add_slider_int(label="cloud resolution", min_value=128, max_value=1024,
-                                       format="%d", default_value=self.pcloud_resolution, callback=callback_set_pcloud_resolution)
+                    dpg.add_input_int(label="cloud resolution", min_value=128, max_value=2048,
+                                      default_value=self.pcloud_resolution, callback=callback_set_pcloud_resolution)
 
-                    dpg.add_slider_int(label="cloud threshold", min_value=1, max_value=1000,
-                                       format="%d", default_value=self.pcloud_threshold, callback=callback_set_pcloud_threshold)
+                    dpg.add_input_int(label="cloud threshold", min_value=1, max_value=1000,
+                                      default_value=self.pcloud_threshold, callback=callback_set_pcloud_threshold)
 
                     with dpg.group(horizontal=True):
-                        dpg.add_text("Point cloud: ")
+                        def callback_set_prune_internal(sender, app_data):
+                            self.pcloud_prune = not self.pcloud_prune
+
+                        dpg.add_checkbox(
+                            label="Prune internal", default_value=self.pcloud_prune, callback=callback_set_prune_internal)
 
                         def callback_pcloud(sender, app_data):
                             self.trainer.save_pcloud(
-                                resolution=self.pcloud_resolution, threshold=self.pcloud_threshold)
+                                resolution=self.pcloud_resolution, threshold=self.pcloud_threshold, prune_internal=self.pcloud_prune)
                             dpg.set_value(
                                 "_log_pcloud", "saved " + f'{self.trainer.name}_{self.trainer.epoch}.csv')
                             # use epoch to indicate different calls.

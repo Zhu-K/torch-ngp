@@ -170,7 +170,30 @@ def torch_vis_2d(x, renormalize=False):
     plt.show()
 
 
-def extract_pcloud(bound_min, bound_max, resolution, query_func, threshold=10, S=128):
+def compute_opacity_gradient(val, S, device='cpu'):
+    # convert density to opacity
+    opacity = 1 - torch.exp(-val).view(S, S, S)
+
+    # calculate gradients of opacity
+    grad_opacity_x = torch.abs(opacity[1:, :, :] - opacity[:-1, :, :])
+    grad_opacity_y = torch.abs(opacity[:, 1:, :] - opacity[:, :-1, :])
+    grad_opacity_z = torch.abs(opacity[:, :, 1:] - opacity[:, :, :-1])
+
+    grad_opacity_x = torch.max(F.pad(grad_opacity_x, (0, 0, 0, 0, 0, 1), "constant", 0), F.pad(
+        grad_opacity_x, (0, 0, 0, 0, 1, 0), "constant", 0))
+    grad_opacity_y = torch.max(F.pad(grad_opacity_y, (0, 0, 0, 1, 0, 0), "constant", 0), F.pad(
+        grad_opacity_y, (0, 0, 1, 0, 0, 0), "constant", 0))
+    grad_opacity_z = torch.max(F.pad(grad_opacity_z, (0, 1, 0, 0, 0, 0), "constant", 0), F.pad(
+        grad_opacity_z, (1, 0, 0, 0, 0, 0), "constant", 0))
+
+    # use max gradient in any direction for a point
+    grad_max = torch.max(
+        torch.max(grad_opacity_x, grad_opacity_y), grad_opacity_z)
+
+    return grad_max.flatten()
+
+
+def extract_pcloud(bound_min, bound_max, resolution, query_func, threshold=10, prune_internal=True, S=128):
 
     X = torch.linspace(bound_min[0], bound_max[0], resolution).split(S)
     Y = torch.linspace(bound_min[1], bound_max[1], resolution).split(S)
@@ -179,7 +202,7 @@ def extract_pcloud(bound_min, bound_max, resolution, query_func, threshold=10, S
     df_points_with_density = pd.DataFrame(columns=['x', 'y', 'z', 'density'])
 
     with torch.no_grad():
-        for xi, xs in enumerate(X):
+        for xs in tqdm.tqdm(X):
             for yi, ys in enumerate(Y):
                 for zi, zs in enumerate(Z):
                     xx, yy, zz = custom_meshgrid(xs, ys, zs)
@@ -187,9 +210,18 @@ def extract_pcloud(bound_min, bound_max, resolution, query_func, threshold=10, S
                         [xx.reshape(-1, 1), yy.reshape(-1, 1), zz.reshape(-1, 1)], dim=-1)  # [S, 3]
                     # [S, 1] --> [x, y, z]
                     val = query_func(pts).detach().cpu()
+
                     temp_df = pd.DataFrame(torch.cat([pts, val[:, None]], dim=1).cpu(
                     ).numpy(), columns=['x', 'y', 'z', 'density'])
-                    temp_df = temp_df[temp_df['density'] > threshold]
+
+                    if prune_internal:
+                        # prune internal points (ie. low density gradient against adjacent)
+                        grad = pd.DataFrame(compute_opacity_gradient(
+                            val, S=len(xs)), columns=['gradient'])
+                        temp_df = temp_df[(temp_df['density'] > threshold) & (
+                            grad['gradient'] > 0.025)]
+                    else:
+                        temp_df = temp_df[temp_df['density'] > threshold]
 
                     df_points_with_density = pd.concat(
                         [df_points_with_density, temp_df], ignore_index=True)
@@ -656,7 +688,7 @@ class Trainer(object):
 
         self.log(f"==> Finished saving mesh.")
 
-    def save_pcloud(self, save_path=None, resolution=256, threshold=10):
+    def save_pcloud(self, save_path=None, resolution=256, threshold=10, prune_internal=True):
 
         if save_path is None:
             save_path = os.path.join(
@@ -673,7 +705,7 @@ class Trainer(object):
             return sigma
 
         df = extract_pcloud(
-            self.model.aabb_infer[:3], self.model.aabb_infer[3:], resolution, query_func, threshold)
+            self.model.aabb_infer[:3], self.model.aabb_infer[3:], resolution, query_func, threshold, prune_internal)
         df.to_csv(save_path, index=False)
 
         self.log(f"==> Finished saving point cloud.")
