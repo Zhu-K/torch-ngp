@@ -219,7 +219,7 @@ def extract_pcloud(bound_min, bound_max, resolution, query_func, threshold=10, p
                         grad = pd.DataFrame(compute_opacity_gradient(
                             val, S=len(xs)), columns=['gradient'])
                         temp_df = temp_df[(temp_df['density'] > threshold) & (
-                            grad['gradient'] > 0.025)]
+                            grad['gradient'] > 0.01)]
                     else:
                         temp_df = temp_df[temp_df['density'] > threshold]
 
