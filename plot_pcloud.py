@@ -1,5 +1,5 @@
 import pandas as pd
-import plotly.express as px
+import plotly.graph_objs as go
 import numpy as np
 import sys
 
@@ -25,10 +25,25 @@ print("Displayed points:", sampled_df.shape[0])
 # take log of density to squish magnitudes. Realistically opacity is 1-exp(-density)
 sampled_df['density'] = np.log(sampled_df['density'])
 
+# create colour strings for each row based on rgb
+sampled_df['colour'] = sampled_df.apply(
+    lambda row: f'rgb({int(row.r * 255)}, {int(row.g * 255)}, {int(row.b * 255)})', axis=1)
 
-fig = px.scatter_3d(sampled_df, x='x', y='z', z='y', color='density',
-                    color_continuous_scale=px.colors.sequential.Viridis)
-fig.update_traces(marker=dict(size=3))
+
+fig = go.Figure(data=[go.Scatter3d(
+    x=sampled_df['x'],
+    # Note: y and z are switched here compared to your initial code
+    y=sampled_df['z'],
+    z=sampled_df['y'],
+    mode='markers',
+    marker=dict(
+        size=3,
+        color=sampled_df['colour'],  # Set color to the RGB values
+    )
+)])
+
+# fig = px.scatter_3d(sampled_df, x='x', y='z', z='y', color='density',
+#                     color_continuous_scale=px.colors.sequential.Viridis)
 
 
 # create point size slider

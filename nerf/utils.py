@@ -193,13 +193,16 @@ def compute_opacity_gradient(val, S, device='cpu'):
     return grad_max.flatten()
 
 
-def extract_pcloud(bound_min, bound_max, resolution, query_func, threshold=10, prune_internal=True, S=128):
+def extract_pcloud(bound_min, bound_max, resolution, density_func, colour_func, threshold=10, prune_internal=True, S=128):
 
     X = torch.linspace(bound_min[0], bound_max[0], resolution).split(S)
     Y = torch.linspace(bound_min[1], bound_max[1], resolution).split(S)
     Z = torch.linspace(bound_min[2], bound_max[2], resolution).split(S)
 
     df_points_with_density = pd.DataFrame(columns=['x', 'y', 'z', 'density'])
+
+    dirs = torch.Tensor(((0, 0, 1), (0, 0, -1), (0, 1, 0),
+                         (0, -1, 0), (1, 0, 0), (-1, 0, 0)))
 
     with torch.no_grad():
         for xs in tqdm.tqdm(X):
@@ -209,19 +212,36 @@ def extract_pcloud(bound_min, bound_max, resolution, query_func, threshold=10, p
                     pts = torch.cat(
                         [xx.reshape(-1, 1), yy.reshape(-1, 1), zz.reshape(-1, 1)], dim=-1)  # [S, 3]
                     # [S, 1] --> [x, y, z]
-                    val = query_func(pts).detach().cpu()
+                    density, geo_feat = density_func(pts)
+                    density = density.detach().cpu()
+                    geo_feat = geo_feat.detach().cpu()
 
-                    temp_df = pd.DataFrame(torch.cat([pts, val[:, None]], dim=1).cpu(
-                    ).numpy(), columns=['x', 'y', 'z', 'density'])
+                    # temp_df = pd.DataFrame(torch.cat([pts, val[:, None]], dim=1).cpu(
+                    # ).numpy(), columns=['x', 'y', 'z', 'density', 'r', 'g', 'b'])
 
+                    mask = (density > threshold)
                     if prune_internal:
                         # prune internal points (ie. low density gradient against adjacent)
-                        grad = pd.DataFrame(compute_opacity_gradient(
-                            val, S=len(xs)), columns=['gradient'])
-                        temp_df = temp_df[(temp_df['density'] > threshold) & (
-                            grad['gradient'] > 0.01)]
-                    else:
-                        temp_df = temp_df[temp_df['density'] > threshold]
+                        grad = compute_opacity_gradient(density, S=len(xs))
+                        mask = mask & (grad > 0.01)
+
+                    pts = pts[mask]
+                    density = density[mask]
+                    geo_feat = geo_feat[mask]
+
+                    # initialize colours [N, 3] to (0, 0, 0)
+                    rgbs = torch.zeros_like(pts)
+                    for dir in dirs:
+                        # expand d from [3] to dimension [, 3]
+                        d = dir.reshape(1, 3)
+                        d = torch.tile(d, (pts.shape[0], 1))
+                        rgbs += colour_func(pts, d, geo_feat).cpu()
+                    # compute avg along each cardinal axis
+                    rgbs /= 6
+
+                    temp_df = pd.DataFrame(torch.cat([pts, density[:, None], rgbs],  dim=1).cpu(
+                    ).numpy(), columns=['x', 'y', 'z', 'density', 'r', 'g', 'b'])
+
 
                     df_points_with_density = pd.concat(
                         [df_points_with_density, temp_df], ignore_index=True)
@@ -698,14 +718,23 @@ class Trainer(object):
 
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
 
-        def query_func(pts):
+        def density_func(pts):
             with torch.no_grad():
                 with torch.cuda.amp.autocast(enabled=self.fp16):
                     sigma = self.model.density(pts.to(self.device))['sigma']
-            return sigma
+                    geo_feat = self.model.density(
+                        pts.to(self.device))['geo_feat']
+            return sigma, geo_feat
+
+        def colour_func(pts, dirs, geo_feat):
+            with torch.no_grad():
+                with torch.cuda.amp.autocast(enabled=self.fp16):
+                    rgbs = self.model.color(
+                        pts.to(self.device), dirs.to(self.device), None, geo_feat.to(self.device))
+            return rgbs
 
         df = extract_pcloud(
-            self.model.aabb_infer[:3], self.model.aabb_infer[3:], resolution, query_func, threshold, prune_internal)
+            self.model.aabb_infer[:3], self.model.aabb_infer[3:], resolution, density_func, colour_func, threshold, prune_internal)
         df.to_csv(save_path, index=False)
 
         self.log(f"==> Finished saving point cloud.")
