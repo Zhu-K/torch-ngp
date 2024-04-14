@@ -4,7 +4,7 @@ import numpy as np
 import sys
 
 # maximum points to display, high number may freeze display
-MAX_POINTS = 100000
+MAX_POINTS = 200000
 
 if len(sys.argv) < 2:
     print("Usage: python plot_pcloud.py filename.csv")

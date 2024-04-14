@@ -21,7 +21,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import torch.distributed as dist
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, Subset
 
 import trimesh
 import mcubes
@@ -193,60 +193,102 @@ def compute_opacity_gradient(val, S, device='cpu'):
     return grad_max.flatten()
 
 
-def extract_pcloud(bound_min, bound_max, resolution, density_func, colour_func, threshold=10, prune_internal=True, S=128):
+# def extract_pcloud(bound_min, bound_max, resolution, density_func, colour_func, threshold=10, prune_internal=True, S=128):
 
-    X = torch.linspace(bound_min[0], bound_max[0], resolution).split(S)
-    Y = torch.linspace(bound_min[1], bound_max[1], resolution).split(S)
-    Z = torch.linspace(bound_min[2], bound_max[2], resolution).split(S)
+#     X = torch.linspace(bound_min[0], bound_max[0], resolution).split(S)
+#     Y = torch.linspace(bound_min[1], bound_max[1], resolution).split(S)
+#     Z = torch.linspace(bound_min[2], bound_max[2], resolution).split(S)
 
-    df_points_with_density = pd.DataFrame(columns=['x', 'y', 'z', 'density'])
+#     df_points_with_density = pd.DataFrame(columns=['x', 'y', 'z', 'density'])
 
-    dirs = torch.Tensor(((0, 0, 1), (0, 0, -1), (0, 1, 0),
-                         (0, -1, 0), (1, 0, 0), (-1, 0, 0)))
+#     dirs = torch.Tensor(((0, 0, 1), (0, 0, -1), (0, 1, 0),
+#                          (0, -1, 0), (1, 0, 0), (-1, 0, 0)))
+
+#     with torch.no_grad():
+#         for xs in tqdm.tqdm(X):
+#             for yi, ys in enumerate(Y):
+#                 for zi, zs in enumerate(Z):
+#                     xx, yy, zz = custom_meshgrid(xs, ys, zs)
+#                     pts = torch.cat(
+#                         [xx.reshape(-1, 1), yy.reshape(-1, 1), zz.reshape(-1, 1)], dim=-1)  # [S, 3]
+#                     # [S, 1] --> [x, y, z]
+#                     density, geo_feat = density_func(pts)
+#                     density = density.detach().cpu()
+#                     geo_feat = geo_feat.detach().cpu()
+
+#                     # temp_df = pd.DataFrame(torch.cat([pts, val[:, None]], dim=1).cpu(
+#                     # ).numpy(), columns=['x', 'y', 'z', 'density', 'r', 'g', 'b'])
+
+#                     mask = (density > threshold)
+#                     if prune_internal:
+#                         # prune internal points (ie. low density gradient against adjacent)
+#                         grad = compute_opacity_gradient(density, S=len(xs))
+#                         mask = mask & (grad > 0.01)
+
+#                     pts = pts[mask]
+#                     density = density[mask]
+#                     geo_feat = geo_feat[mask]
+
+#                     # initialize colours [N, 3] to (0, 0, 0)
+#                     rgbs = torch.zeros_like(pts)
+#                     for dir in dirs:
+#                         # expand d from [3] to dimension [, 3]
+#                         d = dir.reshape(1, 3)
+#                         d = torch.tile(d, (pts.shape[0], 1))
+#                         rgbs += colour_func(pts, d, geo_feat).cpu()
+#                     # compute avg along each cardinal axis
+#                     rgbs /= 6
+
+#                     temp_df = pd.DataFrame(torch.cat([pts, density[:, None], rgbs],  dim=1).cpu(
+#                     ).numpy(), columns=['x', 'y', 'z', 'density', 'r', 'g', 'b'])
+
+
+#                     df_points_with_density = pd.concat(
+#                         [df_points_with_density, temp_df], ignore_index=True)
+
+#     return df_points_with_density
+
+
+def extract_pcloud_medians(data_loader, N, resolution, density_func, colour_func, threshold=0.5, S=128):
+
+    # Get rays from the camera poses and intrinsics
+
+    df_medians = pd.DataFrame(columns=['x', 'y', 'z'])
 
     with torch.no_grad():
-        for xs in tqdm.tqdm(X):
-            for yi, ys in enumerate(Y):
-                for zi, zs in enumerate(Z):
-                    xx, yy, zz = custom_meshgrid(xs, ys, zs)
-                    pts = torch.cat(
-                        [xx.reshape(-1, 1), yy.reshape(-1, 1), zz.reshape(-1, 1)], dim=-1)  # [S, 3]
-                    # [S, 1] --> [x, y, z]
-                    density, geo_feat = density_func(pts)
-                    density = density.detach().cpu()
-                    geo_feat = geo_feat.detach().cpu()
+        for batch in tqdm.tqdm(data_loader):
+            print(type(batch), batch)
+            poses, intrinsics = batch['poses'], batch['intrinsics']
+            rays_o, rays_d, _ = get_rays(
+                poses, intrinsics, H=poses.size(-2), W=poses.size(-1), N=N)
 
-                    # temp_df = pd.DataFrame(torch.cat([pts, val[:, None]], dim=1).cpu(
-                    # ).numpy(), columns=['x', 'y', 'z', 'density', 'r', 'g', 'b'])
+            for i in tqdm.tqdm(range(rays_o.shape[0])):
 
-                    mask = (density > threshold)
-                    if prune_internal:
-                        # prune internal points (ie. low density gradient against adjacent)
-                        grad = compute_opacity_gradient(density, S=len(xs))
-                        mask = mask & (grad > 0.01)
+                ray_origin = rays_o[i, :, :]  # [N, 3]
+                ray_direction = rays_d[i, :, :]  # [N, 3]
 
-                    pts = pts[mask]
-                    density = density[mask]
-                    geo_feat = geo_feat[mask]
+                # Generate ray steps
+                t_vals = torch.linspace(0, 1, resolution).to(ray_origin.device)
+                ray_points = ray_origin.unsqueeze(
+                    1) + t_vals.view(-1, 1).unsqueeze(0) * ray_direction.unsqueeze(1)
 
-                    # initialize colours [N, 3] to (0, 0, 0)
-                    rgbs = torch.zeros_like(pts)
-                    for dir in dirs:
-                        # expand d from [3] to dimension [, 3]
-                        d = dir.reshape(1, 3)
-                        d = torch.tile(d, (pts.shape[0], 1))
-                        rgbs += colour_func(pts, d, geo_feat).cpu()
-                    # compute avg along each cardinal axis
-                    rgbs /= 6
+                # Compute density at each point along the ray
+                # Assuming the density_func only returns density
+                density = density_func(ray_points.squeeze())
+                transmittance = torch.exp(-torch.cumsum(density, dim=0))
 
-                    temp_df = pd.DataFrame(torch.cat([pts, density[:, None], rgbs],  dim=1).cpu(
-                    ).numpy(), columns=['x', 'y', 'z', 'density', 'r', 'g', 'b'])
+                # Find the midpoint where transmittance drops below threshold (0.5)
+                boundary = transmittance < threshold
+                if torch.any(boundary):
+                    first_below_half_idx = torch.argmax(boundary)
+                    midpoint = ray_points[:, first_below_half_idx, :].squeeze()
 
-
-                    df_points_with_density = pd.concat(
-                        [df_points_with_density, temp_df], ignore_index=True)
-
-    return df_points_with_density
+                    # Append data
+                    temp_df = pd.DataFrame([[midpoint[0].item(), midpoint[1].item(), midpoint[2].item()]],
+                                           columns=['x', 'y', 'z'])
+                    df_medians = pd.concat(
+                        [df_medians, temp_df], ignore_index=True)
+    return df_medians
 
 
 def extract_fields(bound_min, bound_max, resolution, query_func, S=128):
@@ -708,13 +750,71 @@ class Trainer(object):
 
         self.log(f"==> Finished saving mesh.")
 
-    def save_pcloud(self, save_path=None, resolution=256, threshold=10, prune_internal=True):
+    # def save_pcloud(self, save_path=None, resolution=256, threshold=10, prune_internal=True):
+
+    #     if save_path is None:
+    #         save_path = os.path.join(
+    #             self.workspace, 'pcloud', f'{self.name}_{self.epoch}.csv')
+
+    #     self.log(f"==> Saving point cloud to {save_path}")
+
+    #     os.makedirs(os.path.dirname(save_path), exist_ok=True)
+
+    #     def density_func(pts):
+    #         with torch.no_grad():
+    #             with torch.cuda.amp.autocast(enabled=self.fp16):
+    #                 sigma = self.model.density(pts.to(self.device))['sigma']
+    #                 geo_feat = self.model.density(
+    #                     pts.to(self.device))['geo_feat']
+    #         return sigma, geo_feat
+
+    #     def colour_func(pts, dirs, geo_feat):
+    #         with torch.no_grad():
+    #             with torch.cuda.amp.autocast(enabled=self.fp16):
+    #                 rgbs = self.model.color(
+    #                     pts.to(self.device), dirs.to(self.device), None, geo_feat.to(self.device))
+    #         return rgbs
+
+    #     df = extract_pcloud(
+    #         self.model.aabb_infer[:3], self.model.aabb_infer[3:], resolution, density_func, colour_func, threshold, prune_internal)
+    #     df.to_csv(save_path, index=False)
+
+    #     self.log(f"==> Finished saving point cloud.")
+
+    def select_random_views(self, train_loader, B):
+        # Assuming train_loader.dataset is accessible and has a length
+        dataset_size = len(train_loader.dataset)
+        # Generate a list of shuffled indices from the dataset
+        indices = list(range(dataset_size))
+        random.shuffle(indices)
+
+        B = min(B, dataset_size)
+
+        # Select the first B indices from the shuffled list
+        selected_indices = indices[:B]
+
+        # Create a subset based on these selected indices
+        subset = Subset(train_loader.dataset, selected_indices)
+
+        # Create a new DataLoader from this subset
+        # Ensure to keep the parameters like batch size, num_workers consistent with the original DataLoader
+        batch_size = train_loader.batch_size
+        subset_loader = DataLoader(
+            subset, batch_size=batch_size, shuffle=False, num_workers=train_loader.num_workers)
+
+        return subset_loader
+
+    def save_pcloud(self, train_loader, save_path=None, resolution=256, threshold=10):
+        threshold = 0.5  # DEBUG
+        B = 20
+
+        subset_loader = self.select_random_views(train_loader, B)
 
         if save_path is None:
             save_path = os.path.join(
-                self.workspace, 'pcloud', f'{self.name}_{self.epoch}.csv')
+                self.workspace, 'pcloud', f'{self.name}_median_{self.epoch}.csv')
 
-        self.log(f"==> Saving point cloud to {save_path}")
+        self.log(f"==> Saving median point cloud to {save_path}")
 
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
 
@@ -733,8 +833,10 @@ class Trainer(object):
                         pts.to(self.device), dirs.to(self.device), None, geo_feat.to(self.device))
             return rgbs
 
-        df = extract_pcloud(
-            self.model.aabb_infer[:3], self.model.aabb_infer[3:], resolution, density_func, colour_func, threshold, prune_internal)
+        df = extract_pcloud_medians(
+            subset_loader, B, resolution, density_func, colour_func, threshold)
+
+        print(df.shape)
         df.to_csv(save_path, index=False)
 
         self.log(f"==> Finished saving point cloud.")
@@ -757,10 +859,11 @@ class Trainer(object):
 
             self.train_one_epoch(train_loader)
 
-            if self.workspace is not None and self.local_rank == 0:
-                self.save_checkpoint(full=True, best=False)
+            # if self.workspace is not None and self.local_rank == 0:
+            #     self.save_checkpoint(full=True, best=False)
 
             if self.epoch % self.eval_interval == 0:
+                self.save_checkpoint(full=True, best=False)
                 self.evaluate_one_epoch(valid_loader)
                 self.save_checkpoint(full=False, best=True)
 

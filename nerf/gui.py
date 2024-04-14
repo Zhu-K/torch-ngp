@@ -285,13 +285,22 @@ class NeRFGUI:
                         dpg.add_checkbox(
                             label="Prune internal", default_value=self.pcloud_prune, callback=callback_set_prune_internal)
 
+                        # def callback_pcloud(sender, app_data):
+                        #     self.trainer.save_pcloud(
+                        #         resolution=self.pcloud_resolution, threshold=self.pcloud_threshold, prune_internal=self.pcloud_prune)
+                        #     dpg.set_value(
+                        #         "_log_pcloud", "saved " + f'{self.trainer.name}_{self.trainer.epoch}.csv')
+                        #     # use epoch to indicate different calls.
+                        #     self.trainer.epoch += 1
+
                         def callback_pcloud(sender, app_data):
-                            self.trainer.save_pcloud(
-                                resolution=self.pcloud_resolution, threshold=self.pcloud_threshold, prune_internal=self.pcloud_prune)
+                            self.trainer.save_pcloud(train_loader=self.train_loader,
+                                                     resolution=self.pcloud_resolution, threshold=self.pcloud_threshold)
                             dpg.set_value(
                                 "_log_pcloud", "saved " + f'{self.trainer.name}_{self.trainer.epoch}.csv')
                             # use epoch to indicate different calls.
                             self.trainer.epoch += 1
+
 
                         dpg.add_button(
                             label="save", tag="_button_pcloud", callback=callback_pcloud)
