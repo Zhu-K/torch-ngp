@@ -66,6 +66,7 @@ class NeRFGUI:
         self.pcloud_resolution = 1024
         self.pcloud_threshold = 50
         self.pcloud_prune = True
+        self.radsplat_sampling = False
 
         self.trainer = trainer
         self.train_loader = train_loader
@@ -282,23 +283,25 @@ class NeRFGUI:
                         def callback_set_prune_internal(sender, app_data):
                             self.pcloud_prune = not self.pcloud_prune
 
+                        def callback_set_radsplat_sampling(sender, app_data):
+                            self.radsplat_sampling = not self.radsplat_sampling
+
                         dpg.add_checkbox(
                             label="Prune internal", default_value=self.pcloud_prune, callback=callback_set_prune_internal)
 
-                        # def callback_pcloud(sender, app_data):
-                        #     self.trainer.save_pcloud(
-                        #         resolution=self.pcloud_resolution, threshold=self.pcloud_threshold, prune_internal=self.pcloud_prune)
-                        #     dpg.set_value(
-                        #         "_log_pcloud", "saved " + f'{self.trainer.name}_{self.trainer.epoch}.csv')
-                        #     # use epoch to indicate different calls.
-                        #     self.trainer.epoch += 1
+                        dpg.add_checkbox(
+                            label="Use RadSplat Sampling", default_value=self.radsplat_sampling, callback=callback_set_radsplat_sampling)
 
                         def callback_pcloud(sender, app_data):
-                            self.trainer.save_pcloud(train_loader=self.train_loader,
-                                                     resolution=self.pcloud_resolution, threshold=self.pcloud_threshold)
+                            if self.radsplat_sampling:
+                                self.trainer.save_pcloud_radsplat(train_loader=self.train_loader,
+                                                                  resolution=self.pcloud_resolution, threshold=self.pcloud_threshold)
+                            else:
+                                self.trainer.save_pcloud(
+                                    resolution=self.pcloud_resolution, threshold=self.pcloud_threshold, prune_internal=self.pcloud_prune)
                             dpg.set_value(
                                 "_log_pcloud", "saved " + f'{self.trainer.name}_{self.trainer.epoch}.csv')
-                            # use epoch to indicate different calls.
+                            # use epoch to indicate subsequent calls.
                             self.trainer.epoch += 1
 
 

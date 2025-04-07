@@ -23,7 +23,7 @@ print("Displayed points:", sampled_df.shape[0])
 
 
 # take log of density to squish magnitudes. Realistically opacity is 1-exp(-density)
-sampled_df['density'] = np.log(sampled_df['density'])
+sampled_df['density'] = 1-np.exp(-sampled_df['density'])
 
 # create colour strings for each row based on rgb
 sampled_df['colour'] = sampled_df.apply(
@@ -41,9 +41,6 @@ fig = go.Figure(data=[go.Scatter3d(
         color=sampled_df['colour'],  # Set color to the RGB values
     )
 )])
-
-# fig = px.scatter_3d(sampled_df, x='x', y='z', z='y', color='density',
-#                     color_continuous_scale=px.colors.sequential.Viridis)
 
 
 # create point size slider
