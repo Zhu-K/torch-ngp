@@ -1,4 +1,44 @@
-# torch-ngp
+# NeRF-Informed Gaussian Initialization
+This repository implements a strategy to sample discrete point clouds from a Neural Radiance Field. The NeRF used in the project is based on Torch-NGP (original documentation below). Additionally, an alternative sampling strategy as described by RadSplat paper (https://arxiv.org/abs/2403.13806) is also implemented for comparison.
+
+## Motivation
+Point cloud initialization significantly impacts 3D Gaussian Splatting training time, quality, and memory footprint. Random or SFM-based initialization can suffer from noise and lack of robustness. This project investigates the feasibility and potential improvement of leveraging the continuous latent information from NeRF to initialize point clouds based on salient geometric landmarks.
+
+## Methodology
+Model overview (This repo implements components to the left of the 3DGS block):
+
+![Model Overview](figures/overview.png)
+
+Key steps:
+1. Sample density output of positions in a grid
+1. Filter for the presence of geometry using density thresholding (pruning)
+1. Compute density gradient along principle axes
+1. Filter for points with high density gradient to identify surface landmarks (removing interior points)
+1. Sample colour information along principle axes at extracted surface landmarks
+1. Feed landmark positions and per-landmark averaged RGB values to initialize 3D Gaussian Splatting
+
+![Result of gradient pruning](figures/pruning.png)
+
+## Observation
+NeRF-informed point cloud extraction provides salient geometric initialization that reduces or eliminates the need for adaptive densification and pruning steps in 3DGS training. 
+
+![Comparison of 3DGS with our initialization vs SFM](figures/comparison.png)
+
+Above figure shows minor loss of PSNR using our method compared against the standard 3DGS initialization using SFM, with the benefit of faster training time and nearly 7x fewer final points and output size. The density of NeRF sampling is configurable.
+
+Sample 3DGS outputs from this sampling implementation:
+
+![Lego Sample](figures/lego.gif)
+
+![Ship Sample](figures/ship.gif)
+
+## Limitations
+Compared to RadSplat sampling, the grid sampling strategy is less robust on translucent materials (due to reliance on high contrast density gradient).
+
+## Usage
+See Torch-NGP documentation below for instructions
+
+# Torch-NGP original documentation:
 
 This repository contains:
 * A pytorch implementation of the SDF and NeRF part (grid encoder, density grid ray sampler) in [instant-ngp](https://github.com/NVlabs/instant-ngp), as described in [_Instant Neural Graphics Primitives with a Multiresolution Hash Encoding_](https://nvlabs.github.io/instant-ngp/assets/mueller2022instant.pdf).
